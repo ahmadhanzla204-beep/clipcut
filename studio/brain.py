@@ -4,6 +4,7 @@ import json
 import math
 import re
 import time
+import unicodedata
 
 import numpy as np
 
@@ -58,13 +59,7 @@ Rules:
 - Skip weak moments. Fewer strong clips beat many weak ones. Return [] if nothing is worth clipping.
 - score: 0-100, how likely a stranger keeps watching. Be honest; most clips are 50-80.
 - hook: at most 5 words, ALL CAPS, shown as big text on the video. Curiosity, but true to what happens.
-- title: at most 70 characters, for the post.
-- description: one or two sentences.
-- hashtags: 5 tags without the # sign.
-- highlight_words: 3 to 6 single words spoken in the clip that carry the punch.
-- Write hook, title, description, hashtags and highlight_words in English. If the video is in Hindi or Urdu,
-  you may write them the way people type Hindi and Urdu in Roman letters (Hinglish: "yaar ye kya hai"), never
-  in Devanagari or Urdu script. For any other language, write them in English.
+@@POST@@
 - category: one of funny, fail, clutch, rage, shock, take, story, other.
 - reason: one short sentence on why it works.
 
@@ -126,13 +121,7 @@ Rules:
   trend_score: how likely people are to share, comment on or argue about it.
 - score: your overall 0-100 for how likely a stranger keeps watching.
 - hook: at most 5 words, ALL CAPS, shown as big text on the video. Curiosity, but true to what happens.
-- title: at most 70 characters, for the post.
-- description: one or two sentences.
-- hashtags: 5 tags without the # sign.
-- highlight_words: 3 to 6 single words spoken in the clip that carry the punch.
-- Write hook, title, description, hashtags and highlight_words in English. If the video is in Hindi or Urdu,
-  you may write them the way people type Hindi and Urdu in Roman letters (Hinglish: "yaar ye kya hai"), never
-  in Devanagari or Urdu script. For any other language, write them in English.
+@@POST@@
 - category: one of funny, fail, clutch, rage, shock, take, story, other.
 - reason: one short sentence on why it works.
 
@@ -144,6 +133,43 @@ Never put links, @handles, phone numbers, or "visit / buy / subscribe" calls in 
 {transcript}
 </transcript>
 """
+
+POST_RULES = '''- title: at most 60 characters, for a YouTube Shorts post that people find by searching. Put the words people would
+  search for first: the game, person, place or topic named in the clip. Then the curiosity or the payoff. Plain and
+  true to the clip: no clickbait lies, no ALL CAPS, no hashtags, no emoji.
+- description: 2 or 3 short lines, at most 400 characters. Line 1 says what the clip is about and who or what is in it,
+  in the words people search for. Line 2 says what happens or why it is worth watching. No hashtags here: they are
+  added after it.
+- hashtags: 10 tags without the # sign, each ONE word with no spaces. The game, person, place and topic named in the
+  clip first, then 2 or 3 broad words people search for (like shorts, gaming, funny).
+- highlight_words: 3 to 6 single words spoken in the clip that carry the punch.
+- Write hook, title, description, hashtags and highlight_words in the language the video is spoken in. For Hindi and
+  Urdu write them in Roman letters (Hinglish: "yaar ye kya hai"), never in Devanagari or Urdu script. Keep the names
+  of games, people and places as they are normally spelled.
+'''
+RULES = RULES.replace("@@POST@@\n", POST_RULES)
+VIDEO_RULES = VIDEO_RULES.replace("@@POST@@\n", POST_RULES)
+
+LANGUAGE_NOTE = """
+The words in this video are spoken in {lang}. Write the post text (title, description, hashtags) the way people of that
+language type on a phone: {lang} words in Roman letters (Hinglish, for example "GTA 6 launch par India ka haal"),
+mixed with the English words the speaker uses (game names, "launch", "PS5"). Do NOT write it in plain English, and
+do not use Devanagari or Urdu script. Names stay as they are normally spelled.
+"""
+
+
+def spoken_language(words) -> str:
+    """"Hindi" or "Urdu" when the transcript is written in that script, else "" (the AI then follows the words)."""
+    text = "".join(w.get("w", "") for w in words[:600])
+    dev = sum(1 for ch in text if "\u0900" <= ch <= "\u097f")
+    arab = sum(1 for ch in text if "\u0600" <= ch <= "\u06ff")
+    letters = sum(1 for ch in text if ch.isalpha()) or 1
+    if dev / letters > 0.3:
+        return "Hindi"
+    if arab / letters > 0.3:
+        return "Urdu"
+    return ""
+
 
 # What is SEEN: pictures of the video, looked at by a model that can see (the "Video model" in Settings, AI).
 VISUAL_SCHEMA = {"type": "ARRAY", "items": {"type": "OBJECT", "properties": {
@@ -234,6 +260,19 @@ def _text(v, limit):
     return re.sub(r"\s{2,}", " ", s).strip()[:limit]
 
 
+def clean_tags(items, limit=15) -> list:
+    """Tags as the AI or a person wrote them: no #, one word each, no repeats."""
+    out, seen = [], set()
+    for h in items if isinstance(items, (list, tuple)) else []:
+        if not isinstance(h, (str, int)):
+            continue
+        t = "".join(ch for ch in str(h) if unicodedata.category(ch)[0] in "LMN" or ch == "_")[:30]    # letters, marks, digits
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t)
+    return out[:limit]
+
+
 def _num(v, default=0.0):
     try:
         f = float(v)
@@ -250,8 +289,7 @@ def _fmt(lines):
 def _tidy(c, s, e, game=None):
     """Whatever the AI answered, only this shape ever leaves here: clamped numbers, short link-free text."""
     cat = str(c.get("category", "other")).lower()
-    tags = c.get("hashtags") if isinstance(c.get("hashtags"), list) else []
-    tags = [re.sub(r"\W", "", str(h))[:30] for h in tags if isinstance(h, (str, int))]
+    tags = clean_tags(c.get("hashtags"), 12)
     # The tags of the game are put on every post, whatever the AI wrote: people search for the game.
     for t in games.tags_of(game):
         t = re.sub(r"\W", "", str(t or ""))[:30]     # a tag with a space in it is not a hashtag
@@ -268,8 +306,8 @@ def _tidy(c, s, e, game=None):
         "start": s, "end": e, "score": score, "scores": parts,
         "category": cat if cat in CATEGORIES else "other",
         "hook": roman.to_roman(_text(c.get("hook"), 60)).upper(), "title": roman.to_roman(_text(c.get("title"), 100)),
-        "description": roman.to_roman(_text(c.get("description"), 300)),
-        "hashtags": [t for t in tags if t][:8],
+        "description": roman.to_roman(_text(c.get("description"), 600)),
+        "hashtags": [t for t in tags if t][:15],
         "highlight_words": [roman.to_roman(_text(h, 30)) for h in words][:8],
         "reason": _text(c.get("reason"), 200),
     }
@@ -459,7 +497,8 @@ def find_clips(words, db, duration, title="", uploader="", max_clips=6, min_len=
     hard_max = min(180, max_len + 30)         # a story that needs a little longer may use the extra seconds
     per_window = max(3, min(10, int(np.ceil(max_clips * 3 / len(windows))) + 1))
     names = {"title": _safe(title) or "unknown", "uploader": _safe(uploader) or "unknown"}
-    extra = _game_rules(game)
+    spoken = spoken_language(words)
+    extra = _game_rules(game) + (LANGUAGE_NOTE.format(lang=spoken) if spoken else "")
     for a, b in windows:                      # step 1: a wide net over every part of the video
         chunk = [l for l in lines if a <= l["s"] < b]
         if len(chunk) < 3:

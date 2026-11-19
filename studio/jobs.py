@@ -4,6 +4,7 @@ import json
 import os
 import math
 import queue
+import re
 import shutil
 import threading
 import time
@@ -361,6 +362,9 @@ def request_render(jid, cid, changes: dict):
     for k in ("hook", "title", "description", "style", "layout"):
         if k in changes:
             new[k] = str(changes[k])[:{"hook": 60, "title": 100, "description": 2000}.get(k, 20)]
+    if "hashtags" in changes:      # typed in the clip editor: "gta6, vice city, shorts"
+        raw = changes["hashtags"]
+        new["hashtags"] = brain.clean_tags(raw if isinstance(raw, list) else re.split(r"[,\n]", str(raw)))
     if new.get("style") not in render.STYLES:
         new["style"] = DEFAULTS["style"]
     if new.get("layout") not in render.LAYOUTS:

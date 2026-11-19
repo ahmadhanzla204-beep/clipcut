@@ -2168,7 +2168,9 @@ function drawClipDlg(full) {
           <label class="f">End (seconds)<input data-f="end" type="number" step="0.5" value="${c.end}"></label></div>
         <h3>Post text</h3>
         <label class="f">Title<input data-f="title" value="${esc(c.title)}"></label>
-        <label class="f">Description<textarea data-f="description" rows="2">${esc(c.description)}</textarea></label>
+        <label class="f">Description<textarea data-f="description" rows="3">${esc(c.description)}</textarea></label>
+        <label class="f">Tags<input data-f="hashtags" value="${esc((c.hashtags || []).join(", "))}" spellcheck="false">
+          <span class="hint">Words people search for, with a comma between them. No # needed. They are added to the post.</span></label>
         <button class="btn" data-act="remake">${ic("scissors")}Save and re-make clip</button>
         <h3>Post it</h3>
         <div id="dposts" class="row" style="gap:4px"></div>
