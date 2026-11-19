@@ -104,13 +104,15 @@ ai.call("model-a", "hello", brain.SCHEMA)
 check("another service: no cost asked for, none reported", "usage" not in seen[-1][1] and ai.last_cost() is None)
 
 check("an answer with extra text after the JSON is still read", ai._parse('[{"a": 1}]\n[{"a": 2}]') == [{"a": 1}] and ai._parse('Here: {"items": [3]} thanks') == [3])
-for name, mark, nxt in (("Hindi", "।", "अब"), ("Urdu", "۔", "اب"), ("Urdu question", "؟", "اب")):
-    got = brain._snap({"start": 1, "end": 24}, [{"s": 1.0}],
-                      [{"w": "a", "s": 1.0, "e": 1.2}, {"w": "x" + mark, "s": 19.6, "e": 20.0}, {"w": nxt, "s": 20.0, "e": 20.2},
-                       {"w": "mid", "s": 23.0, "e": 23.5}], 15, 60, 100, sentence=True)[1]
+for name, mark, nxt in (("Hindi", "\u0964", "\u0905\u092c"), ("Urdu", "\u06d4", "\u0627\u0628"), ("Urdu question", "\u061f", "\u0627\u0628")):
+    ws = [{"w": "a", "s": 1.0, "e": 1.2}, {"w": "one" + mark, "s": 9.6, "e": 10.0}, {"w": "b", "s": 10.0, "e": 10.2},
+          {"w": "two" + mark, "s": 19.6, "e": 20.0}, {"w": nxt, "s": 20.0, "e": 20.2}, {"w": "c", "s": 20.2, "e": 21.0}, {"w": "d", "s": 21.0, "e": 22.0}, {"w": "e", "s": 22.0, "e": 23.0}, {"w": "f", "s": 23.0, "e": 24.0}]
+    got = brain._snap({"start": 1, "end": 20.4}, [{"s": 1.0}], ws, 15, 60, 100, sentence=True)[1]
     check(f"{name}: a clip ends where the sentence ends, not in the middle of the next one", got <= 20.0, str(got))
+ws = [{"w": "a", "s": 1.0, "e": 1.2}, {"w": "one.", "s": 9.6, "e": 10.0}, {"w": "b", "s": 10.0, "e": 10.2},
+      {"w": "end.", "s": 19.6, "e": 20.0}, {"w": "Now", "s": 20.0, "e": 20.2}, {"w": "c", "s": 20.2, "e": 21.0}, {"w": "d", "s": 21.0, "e": 22.0}, {"w": "e", "s": 22.0, "e": 23.0}, {"w": "f", "s": 23.0, "e": 24.0}]
 check("a clip does not run into the next sentence's first word",
-      brain._snap({"start": 1, "end": 20}, [{"s": 1.0}], [{"w": "a", "s": 1.0, "e": 1.2}, {"w": "end.", "s": 19.6, "e": 20.0}, {"w": "Now", "s": 20.0, "e": 20.2}], 15, 60, 100, sentence=True)[1] <= 20.0)
+      brain._snap({"start": 1, "end": 20.4}, [{"s": 1.0}], ws, 15, 60, 100, sentence=True)[1] <= 20.0)
 
 use("anthropic")
 out, sent, wrote = ai.call("model-a", "hello", brain.SCHEMA)
@@ -139,7 +141,7 @@ config._kept.clear()
 # ---- the whole path: a call is made for a user and shows up in their usage, and only theirs
 u1, _ = auth._create("ai-one@example.com", "One", password_hash="x")
 u2, _ = auth._create("ai-two@example.com", "Two", password_hash="x")
-words = [{"w": f"word{i}", "s": i * 0.5, "e": i * 0.5 + 0.4} for i in range(120)]
+words = [{"w": f"word{i}" + ("." if i % 10 == 9 else ""), "s": i * 0.5, "e": i * 0.5 + 0.4} for i in range(120)]
 with ctx.as_user(u1.id):
     usage.set_context(None, "A test video")
     import numpy as np
@@ -156,16 +158,16 @@ with ctx.as_user(u1.id):
     check("a clip that is cut off is stretched and kept, not thrown away", len(clips3) == 1 and clips3[0]["end"] > 25 and info3["note"] == "", str((clips3, info3)))
     story_whole[0] = True
     # the story check is ONE call for all the clips
-    three = [{"start": 1.0 + 25 * k, "end": 20.0 + 25 * k, "score": 70 + k} for k in range(3)]
+    three = [{"start": 25.0 * k, "end": 19.9 + 25 * k - (10 if k == 2 else 0), "score": 70 + k} for k in range(3)]
     all_lines = brain.make_lines(words)
     def checks():
         return sum(1 for x in seen if "You check several short clips" in x[1]["contents"][0]["parts"][0]["text"])
     seen.clear()
-    kept, dropped, _t = brain._check_clips(three, all_lines, words, 15, 90, 60.0, lambda *_a: None)
+    kept, dropped, _t = brain._check_clips(three, all_lines, words, 5, 90, 60.0, lambda *_a: None)
     check("three whole clips are checked in one call", checks() == 1 and len(kept) == 3 and dropped == 0, str((checks(), len(kept), dropped)))
     story_whole[0] = "mixed"
     seen.clear()
-    kept, dropped, _t = brain._check_clips(three, all_lines, words, 15, 90, 60.0, lambda *_a: None)
+    kept, dropped, _t = brain._check_clips(three, all_lines, words, 5, 90, 60.0, lambda *_a: None)
     check("a clip cut off for good is left out; one the AI did not answer for is kept; still one call",
           checks() == 1 and len(kept) == 2 and dropped == 1 and [k["score"] for k in kept] == [70, 72], str((checks(), kept, dropped)))
     story_whole[0] = True
